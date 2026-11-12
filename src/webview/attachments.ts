@@ -153,7 +153,8 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
     return token;
   }
 
-  function add(next: Attachment[]) {
+  /** Adds `next` to the message without redrawing (see add and replace). */
+  function put(next: Attachment[]) {
     for (const a of next) {
       if (a.kind === "thread") {
         // The same conversation again: one chip.
@@ -164,6 +165,10 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
       } else if (new RegExp(`${escape(mentionText(a))}(?=\\s|$)`).test(input.value)) remember(a); // already in the text (a message put back): just mark it
       else insertMention(a);
     }
+  }
+
+  function add(next: Attachment[]) {
+    put(next);
     renderChips();
     refresh();
     changed();
@@ -328,6 +333,16 @@ export function createAttachments(input: HTMLTextAreaElement, send: (m: PanelToH
     /** The attachments now (mentions still in the text, then text chips), without clearing them: for the saved draft. */
     current(): Attachment[] {
       return [...present().map((t) => known.get(t)!), ...texts];
+    },
+    /** Shows another message in the box (another tab's draft): its text and attachments replace what's there. Not a change to save. */
+    replace(text: string, next: readonly Attachment[]) {
+      known.clear();
+      texts = [];
+      close();
+      input.value = text;
+      put([...next]);
+      renderChips();
+      refresh();
     },
     /** The attachments to send (mentions still in the text, then text chips), and clears them. */
     take(): Attachment[] {

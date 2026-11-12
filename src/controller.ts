@@ -71,7 +71,9 @@ function hostOf(url: string) {
   }
 }
 
-/** Where the unsent message is kept (per window). */
+/** Where each tab's unsent message is kept (per window): tab id -> its draft. */
+const DRAFTS_KEY = "kernl.drafts";
+/** The one draft 0.14.1 and earlier kept for the whole window: the shown tab gets it once, then it's removed. */
 const DRAFT_KEY = "kernl.draft";
 
 /** How long an agent's session list is reused when its store hasn't changed (a change empties it at once). */
@@ -656,6 +658,8 @@ export class Controller implements vscode.Disposable {
     this.workspaces.delete(id);
     this.tabUsed.delete(id);
     this.tabConversation.delete(id);
+    // Its unsent message goes with it (saveDrafts keeps open tabs' only): a later tab with its number starts empty.
+    void this.saveDrafts(this.drafts());
     void this.host.sessions.saveQueue(tab.queueKey, []).catch((err) => this.log.error("could not remove a closed tab's queue", err));
     if (this.active === id) this.active = next.id;
     this.postWorkspaces(this.active);
@@ -726,16 +730,41 @@ export class Controller implements vscode.Disposable {
     return editorFocusReturn();
   }
 
-  private async keepDraft(text: string, attachments: Attachment[]) {
+  private async keepDraft(workspace: string, text: string, attachments: Attachment[]) {
+    // A tab that closed meanwhile has no draft to keep.
+    if (!this.workspace(workspace)) return;
     const { draft, dropped } = draftToKeep(String(text ?? ""), Array.isArray(attachments) ? attachments : []);
     if (dropped) this.log.info(`draft: ${dropped} long text attachment(s) not kept (over ${DRAFT_TEXT_LIMIT} characters in total)`);
-    await this.context.workspaceState.update(DRAFT_KEY, draft);
+    const drafts = this.drafts();
+    if (draft) drafts[workspace] = draft;
+    else delete drafts[workspace];
+    await this.saveDrafts(drafts);
   }
 
-  /** The panel loaded (after a restart or reload): it gets the unsent message back. */
+  /** Each tab's unsent message, by tab id (a copy: change it, then saveDrafts). */
+  private drafts(): Record<string, Draft> {
+    return { ...this.context.workspaceState.get<Record<string, Draft>>(DRAFTS_KEY) };
+  }
+
+  /** Keeps the drafts of open tabs only, once the tabs are restored (before that, a restored tab may not be open yet). */
+  private saveDrafts(drafts: Record<string, Draft>) {
+    const kept = this.tabsRestored ? Object.fromEntries(Object.entries(drafts).filter(([id]) => this.workspaces.has(id))) : drafts;
+    return this.context.workspaceState.update(DRAFTS_KEY, Object.keys(kept).length ? kept : undefined);
+  }
+
+  /** The panel loaded (after a restart or reload): each open tab gets its unsent message back. */
   private restoreDraft() {
-    const draft = this.context.workspaceState.get<Draft>(DRAFT_KEY);
-    if (draft) this.panel.post({ type: "restoreDraft", text: draft.text, attachments: draft.attachments });
+    const drafts = this.drafts();
+    const windowDraft = this.context.workspaceState.get<Draft>(DRAFT_KEY);
+    // Moved only into an open tab (a window with no folder has none yet): until then it stays where it is.
+    if (windowDraft && this.workspace(this.active)) {
+      drafts[this.active] ??= windowDraft;
+      void this.saveDrafts(drafts);
+      void this.context.workspaceState.update(DRAFT_KEY, undefined);
+    }
+    for (const [workspace, draft] of Object.entries(drafts)) {
+      if (this.workspace(workspace)) this.panel.post({ type: "restoreDraft", workspace, text: draft.text, attachments: draft.attachments });
+    }
   }
 
   /** A CLI agent's model or thinking chip: its own choices (from the agent), the current one marked. */
@@ -1720,8 +1749,10 @@ export class Controller implements vscode.Disposable {
         this.postActiveFile();
         await this.postStatus();
         this.postWorkspaces();
-        this.panel.post(panelSnapshot([...this.requests].map(([id, r]) => [id, { workspace: r.workspace, request: r.request }])));
+        // Drafts before the cards: a card in another tab makes the panel show that tab, which saves the tab it
+        // leaves; that tab must already have its draft back, or its empty box would replace the kept one.
         this.restoreDraft();
+        this.panel.post(panelSnapshot([...this.requests].map(([id, r]) => [id, { workspace: r.workspace, request: r.request }])));
         this.prepareShown();
         return;
       case "send": {
@@ -1845,7 +1876,7 @@ export class Controller implements vscode.Disposable {
       case "setMode":
         return this.setMode(m.workspace, m.mode);
       case "draft":
-        return this.keepDraft(m.text, m.attachments);
+        return this.keepDraft(m.workspace, m.text, m.attachments);
       case "keyboardFocus":
         this.panelHasKeyboard = m.inPanel;
         this.panelFocus.fire(m.inPanel);
@@ -2129,6 +2160,8 @@ export class Controller implements vscode.Disposable {
       panelState: () => this.panel.lifecycleState(),
       /** The controller's own conversation store (Export and Import data read and write it). */
       sessions: this.host.sessions,
+      /** The window's saved state (drafts, open tabs). */
+      workspaceState: this.context.workspaceState,
       /** Answers Export and Import data's save and open dialogs. */
       useFileDialogs: (dialogs: { save: (o: vscode.SaveDialogOptions) => Thenable<vscode.Uri | undefined>; open: (o: vscode.OpenDialogOptions) => Thenable<vscode.Uri[] | undefined> }) => (this.fileDialogs = dialogs),
       usePrompts: (p: Prompts) => (this.prompts = p),

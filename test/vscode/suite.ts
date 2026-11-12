@@ -1977,17 +1977,37 @@ async function panelChecks(ext: vscode.Extension<any>, root: string, fakeAgent: 
     }
   });
 
-  await check("drafts: the unsent message is kept for the window, given back when the panel loads again, and cleared once sent", async () => {
+  await check("drafts: each tab's unsent message is kept, given back to that tab when the panel loads again, and cleared once sent or its tab closes", async () => {
     let from = delivered.length;
-    await testing.receive({ type: "draft", text: "open browser and look for brevo loyalty apis", attachments: [{ path: "README.md", kind: "file" }] });
-    await testing.receive({ type: "ready" });
-    const back = await waitFor("the draft given back", (m) => m.type === "restoreDraft", from);
-    assert.deepEqual([back.text, back.attachments], ["open browser and look for brevo loyalty apis", [{ path: "README.md", kind: "file" }]]);
-    await testing.receive({ type: "draft", text: "", attachments: [] });
+    await testing.receive({ type: "newTab" });
+    const tab = lastWorkspaces(from)?.focus;
+    assert.ok(tab && tab !== "main", "a second tab, shown");
+    // The real panel saves the tab it leaves (whatever its box holds) just before it reports the new one (the
+    // host answers that with activeFile): the drafts below come after, so they're the ones kept.
+    await waitFor("the panel showing the new tab", (m) => m.type === "activeFile", from);
+    await testing.receive({ type: "draft", workspace: "main", text: "open browser and look for brevo loyalty apis", attachments: [{ path: "README.md", kind: "file" }] });
+    await testing.receive({ type: "draft", workspace: tab, text: "the second tab's message", attachments: [] });
     from = delivered.length;
     await testing.receive({ type: "ready" });
     await waitFor("the panel ready again", (m) => m.type === "workspaces", from);
-    assert.ok(!delivered.slice(from).some((m) => m.type === "restoreDraft"), "nothing to give back once sent");
+    const back = () => Object.fromEntries(delivered.slice(from).filter((m) => m.type === "restoreDraft").map((m) => [m.workspace, [m.text, m.attachments]]));
+    assert.deepEqual(back(), { main: ["open browser and look for brevo loyalty apis", [{ path: "README.md", kind: "file" }]], [tab]: ["the second tab's message", []] }, "each tab gets its own back");
+    const handshake = delivered.slice(from).map((m) => m.type).filter((t) => t === "restoreDraft" || t === "snapshot");
+    assert.ok(handshake.indexOf("snapshot") > handshake.lastIndexOf("restoreDraft"), `drafts come before the cards, which can switch tabs: ${handshake.join(", ")}`);
+    await testing.receive({ type: "draft", workspace: "main", text: "", attachments: [] });
+    await testing.receive({ type: "closeTab", workspace: tab });
+    from = delivered.length;
+    await testing.receive({ type: "ready" });
+    await waitFor("the panel ready again", (m) => m.type === "workspaces", from);
+    assert.deepEqual(back(), {}, "nothing to give back once sent, or once its tab closed");
+    // The one draft 0.14.1 and earlier kept for the window goes to the shown tab, once.
+    await testing.workspaceState.update("kernl.draft", { text: "from before tabs had drafts", attachments: [] });
+    from = delivered.length;
+    await testing.receive({ type: "ready" });
+    await waitFor("the panel ready again", (m) => m.type === "workspaces", from);
+    assert.deepEqual(back(), { main: ["from before tabs had drafts", []] });
+    assert.equal(testing.workspaceState.get("kernl.draft"), undefined, "the old draft is moved, not copied");
+    await testing.receive({ type: "draft", workspace: "main", text: "", attachments: [] });
   });
 
   await check("fork: a CLI agent with session/fork forks its whole conversation from the last message; an earlier message is refused", async () => {

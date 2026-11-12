@@ -1713,13 +1713,59 @@ test("the unsent message is sent to the host a moment after it changes and clear
   input.dispatchEvent(new p.window.Event("input"));
   assert.ok(!p.sent.some((m) => m.type === "draft"), "not on every keystroke");
   await tick(450);
-  assert.deepEqual(p.sent.filter((m) => m.type === "draft").at(-1), { type: "draft", text: "open browser and look for brevo loyalty apis", attachments: [] });
+  assert.deepEqual(p.sent.filter((m) => m.type === "draft").at(-1), { type: "draft", workspace: "main", text: "open browser and look for brevo loyalty apis", attachments: [] });
   input.dispatchEvent(new p.window.KeyboardEvent("keydown", { key: "Enter", cancelable: true }));
-  assert.deepEqual(p.sent.filter((m) => m.type === "draft").at(-1), { type: "draft", text: "", attachments: [] }, "sent: the draft is cleared at once");
-  p.host({ type: "restoreDraft", text: "look at @src/a.ts", attachments: [{ path: "src/a.ts", kind: "file" }] });
+  assert.deepEqual(p.sent.filter((m) => m.type === "draft").at(-1), { type: "draft", workspace: "main", text: "", attachments: [] }, "sent: the draft is cleared at once");
+  p.host({ type: "restoreDraft", workspace: "main", text: "look at @src/a.ts", attachments: [{ path: "src/a.ts", kind: "file" }] });
   assert.equal(input.value, "look at @src/a.ts");
   assert.ok(p.doc.querySelector(".input-layer .mention"), "the file is recognized again");
   input.value = "typed since";
-  p.host({ type: "restoreDraft", text: "older draft", attachments: [] });
+  p.host({ type: "restoreDraft", workspace: "main", text: "older draft", attachments: [] });
   assert.equal(input.value, "typed since", "never over what was typed");
+});
+
+test("each tab keeps its own unsent message: switching tabs swaps the composer, and each draft is saved under its tab", async () => {
+  const p = loadPanel();
+  const tab2 = { ...MAIN, id: "main~2", label: "Main · tab 2", tabOf: "main" };
+  p.host(workspaces([MAIN, tab2], "main"));
+  const input = p.doc.querySelector<HTMLTextAreaElement>(".input")!;
+  const tabButton = (n: number) => p.all(".tab-button")[n] as HTMLButtonElement;
+  input.value = "look at @src/a.ts first";
+  p.host({ type: "addAttachments", items: [{ path: "notes", kind: "text", text: "pasted notes" }] });
+  input.dispatchEvent(new p.window.Event("input"));
+  tabButton(1).click();
+  assert.equal(input.value, "", "a new tab starts with an empty box");
+  assert.equal(p.all(".attachments > *").length, 0, "and no attachments from the other tab");
+  assert.deepEqual(p.sent.filter((m) => m.type === "draft").at(-1), { type: "draft", workspace: "main", text: "look at @src/a.ts first", attachments: [{ path: "notes", kind: "text", text: "pasted notes" }] }, "the left tab's draft is saved at once, under its tab");
+  input.value = "second tab's message";
+  input.dispatchEvent(new p.window.Event("input"));
+  await tick(450);
+  assert.deepEqual(p.sent.filter((m) => m.type === "draft").at(-1), { type: "draft", workspace: "main~2", text: "second tab's message", attachments: [] });
+  tabButton(0).click();
+  assert.equal(input.value, "look at @src/a.ts first", "the first tab's message comes back");
+  assert.equal(p.doc.querySelectorAll(".attachments > *").length, 1, "with its attachment");
+  tabButton(1).click();
+  assert.equal(input.value, "second tab's message");
+  // Put back into a tab that isn't shown (a refused fork): it lands in that tab, not the shown one.
+  p.host({ type: "setInput", workspace: "main", text: "fork refused, try again" });
+  assert.equal(input.value, "second tab's message", "the shown tab's box is untouched");
+  // A draft restored after a reload goes to its own tab.
+  p.host({ type: "restoreDraft", workspace: "main~2", text: "ignored: this box has text", attachments: [] });
+  assert.equal(input.value, "second tab's message");
+  tabButton(0).click();
+  assert.equal(input.value, "fork refused, try again");
+});
+
+test("a panel that loads again with a card waiting in another tab keeps the shown tab's restored draft when the card shows its tab", () => {
+  const p = loadPanel();
+  const tab2 = { ...MAIN, id: "main~2", label: "Main · tab 2", tabOf: "main", waiting: 1 };
+  // The host's order on ready: workspaces, drafts, then the cards.
+  p.host(workspaces([MAIN, tab2]));
+  p.host({ type: "restoreDraft", workspace: "main", text: "keep me", attachments: [] });
+  p.host({ type: "snapshot", cards: [card("c1", "main~2", "Main · tab 2")] });
+  const input = p.doc.querySelector<HTMLTextAreaElement>(".input")!;
+  assert.equal(input.value, "", "the card's tab is shown, with its own (empty) box");
+  assert.deepEqual(p.sent.filter((m) => m.type === "draft"), [{ type: "draft", workspace: "main", text: "keep me", attachments: [] }], "the tab left is saved with its draft, not emptied");
+  (p.all(".tab-button")[0] as HTMLButtonElement).click();
+  assert.equal(input.value, "keep me");
 });
