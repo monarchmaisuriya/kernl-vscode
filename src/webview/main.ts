@@ -20,6 +20,7 @@ import { createPlanBar } from "./planBar";
 import { createThinking, type ThinkingBlock } from "./thinking";
 import { createToolGroup, type ToolGroup } from "./toolGroup";
 import { createToolRow, formatElapsed, quietKind, type ToolRow } from "./toolRow";
+import type { Draft } from "../ui/draft";
 
 declare function acquireVsCodeApi(): { postMessage(m: PanelToHost): void };
 const vscode = acquireVsCodeApi();
@@ -77,6 +78,8 @@ interface Pane {
   replyActions: MessageActions[];
   /** The current turn: its message id (for Fork) and all its reply text (for Copy). */
   turn?: { messageId?: string; text: string };
+  /** This tab's unsent message while another tab is shown (the composer holds the shown tab's). */
+  draft?: Draft;
 }
 
 /** Tool arguments arrive as JSON text; a malformed or truncated one just isn't read. */
@@ -158,11 +161,12 @@ attachButton.title = "Add files or folders (in the Explorer: right-click, Add to
 attachButton.dataset.anchor = "attach";
 const attachments = createAttachments(input, (m) => send(m), () => (render(), saveDraft()));
 
-// The unsent message is kept by the host (per window) a moment after each change, so a restart doesn't lose it.
+// The shown tab's unsent message is kept by the host (per tab) a moment after each change, so a restart doesn't
+// lose it. Switching tabs saves it at once (see select), so a pending save always belongs to the shown tab.
 let draftTimer: ReturnType<typeof setTimeout> | undefined;
 function saveDraft(now = false) {
   clearTimeout(draftTimer);
-  const save = () => send({ type: "draft", text: input.value, attachments: attachments.current() });
+  const save = () => send({ type: "draft", workspace: active, text: input.value, attachments: attachments.current() });
   if (now) save();
   else draftTimer = setTimeout(save, 400);
 }
@@ -556,6 +560,17 @@ function markLatest(p: Pane, rows: HTMLElement[]) {
 function select(id: string) {
   if (!panes.has(id)) return;
   const changed = id !== active;
+  // The composer belongs to the shown tab: the one left keeps its message, the one shown gets its own back.
+  if (changed) {
+    const left = pane(active);
+    if (left) {
+      saveDraft(true);
+      left.draft = { text: input.value, attachments: attachments.current() };
+    } else clearTimeout(draftTimer);
+    const shown = pane(id)!;
+    attachments.replace(shown.draft?.text ?? "", shown.draft?.attachments ?? []);
+    shown.draft = undefined;
+  }
   active = id;
   // The Conversations view lists one workspace's conversations: another workspace closes it.
   if (changed && conversationsView.open && conversationsView.workspace !== id) conversationsView.hide();
@@ -784,7 +799,11 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
     case "activeFile":
       attachments.setActiveFile(m.path, m.outside);
       return;
-    case "restoreDraft":
+    case "restoreDraft": {
+      const owner = pane(m.workspace);
+      if (!owner) return;
+      // A tab that isn't shown keeps it until it's shown (never over a message it already has).
+      if (m.workspace !== active) return void (owner.draft ??= { text: m.text, attachments: m.attachments });
       // Never over what was typed since the panel opened.
       if (input.value.trim() || attachments.current().length) return;
       input.value = m.text;
@@ -792,6 +811,7 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       attachments.refresh();
       render();
       return;
+    }
     case "menu":
       anchoredMenu.open(m);
       return;
@@ -980,6 +1000,12 @@ window.addEventListener("message", (event: MessageEvent<HostToPanel>) => {
       p.turn = undefined;
       break;
     case "setInput":
+      // A tab that isn't shown gets it in its own draft (kept with its attachments), saved under it at once.
+      if (m.workspace !== active) {
+        p.draft = { text: m.text, attachments: p.draft?.attachments ?? [] };
+        send({ type: "draft", workspace: m.workspace, ...p.draft });
+        break;
+      }
       input.value = m.text;
       attachments.refresh();
       input.focus();

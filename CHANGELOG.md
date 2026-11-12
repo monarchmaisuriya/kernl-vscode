@@ -4,6 +4,10 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Fixed
+
+- Each tab keeps its own unsent message: switching tabs (or opening a new one) no longer carries the message box's text and attachments into the other tab. Each tab's message comes back after a reload; closing a tab discards its message.
+
 ## [0.14.1] - 2026-10-27
 
 ### Fixed

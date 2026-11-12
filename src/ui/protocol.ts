@@ -213,8 +213,8 @@ export type HostToPanel =
   | { type: "userMessage"; workspace: string; text: string; attachments?: Attachment[]; id?: string; turn?: number }
   /** Puts text back in the composer (a message that couldn't be sent, such as a fork the agent refused). */
   | { type: "setInput"; workspace: string; text: string }
-  /** The unsent message saved before the panel last closed (VS Code restarted, the window reloaded); filled in only when the box is empty. */
-  | { type: "restoreDraft"; text: string; attachments: Attachment[] }
+  /** A tab's unsent message saved before the panel last closed (VS Code restarted, the window reloaded); filled in only when that tab's box is empty. */
+  | { type: "restoreDraft"; workspace: string; text: string; attachments: Attachment[] }
   /** Attachments to add to the composer (from the + menu, the Explorer, or a drop). */
   | { type: "addAttachments"; items: Attachment[] }
   /** Answer to searchFiles: workspace paths matching the "@" query. */
@@ -325,8 +325,8 @@ export type PanelToHost =
   | { type: "setMode"; workspace: string; mode: string }
   /** The panel gained or lost keyboard focus: where kernl puts focus back after bringing its browser tab to the front. */
   | { type: "keyboardFocus"; inPanel: boolean }
-  /** The message box's text and attachments, a moment after they change ("" once sent): kept so a restart doesn't lose them. */
-  | { type: "draft"; text: string; attachments: Attachment[] }
+  /** A tab's message box text and attachments, a moment after they change ("" once sent): kept so a restart doesn't lose them. */
+  | { type: "draft"; workspace: string; text: string; attachments: Attachment[] }
   /** A CLI agent's model or thinking chip: open its choices. */
   | { type: "pickAgentOption"; workspace: string; id: string }
   /** A CLI agent's fast-mode chip: turn it on or off. */
