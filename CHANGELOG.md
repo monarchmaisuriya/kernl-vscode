@@ -4,6 +4,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-11-12
+
 ### Fixed
 
 - Each tab keeps its own unsent message: switching tabs (or opening a new one) no longer carries the message box's text and attachments into the other tab. Each tab's message comes back after a reload; closing a tab discards its message.
@@ -323,7 +325,8 @@ All notable changes to kernl are recorded here. The format follows [Keep a Chang
 - Workspaces on git worktrees, conversation history, queued messages, checkpoints with restore, and forking.
 - `AGENTS.md`, `.kernl/rules`, named agents, and Agent Skills.
 
-[Unreleased]: https://github.com/pushowl/kernl/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/pushowl/kernl/compare/v0.14.2...HEAD
+[0.14.2]: https://github.com/pushowl/kernl/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/pushowl/kernl/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/pushowl/kernl/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/pushowl/kernl/compare/v0.12.2...v0.13.0
